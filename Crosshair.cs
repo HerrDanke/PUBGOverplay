@@ -162,6 +162,8 @@ namespace PubgCrosshair
             hotkeys = HotkeyConfig.Load();
             RebuildKeyActions();
 
+            this.Icon = DotIcon.Create(32); // 窗口图标与托盘红点同源
+
             SetupTrayIcon();
 
             mapNameTimer = new Timer();
@@ -332,19 +334,7 @@ namespace PubgCrosshair
             trayMenu.Items.Add("设置", null, (s, e) => { this.OpenSettings(); });
             trayMenu.Items.Add("退出", null, (s, e) => { Application.Exit(); });
 
-            using (Bitmap bmp = new Bitmap(16, 16))
-            {
-                using (Graphics g = Graphics.FromImage(bmp))
-                {
-                    g.Clear(Color.Transparent);
-                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
-                    using (SolidBrush brush = new SolidBrush(Color.FromArgb(255, 255, 60, 60)))
-                    {
-                        g.FillEllipse(brush, 3, 3, 10, 10);
-                    }
-                }
-                trayIcon.Icon = Icon.FromHandle(bmp.GetHicon());
-            }
+            trayIcon.Icon = DotIcon.Create(16);
 
             trayIcon.Text = "PUBG 标记 - 已隐藏 (按 ` 显示)";
             trayIcon.Visible = true;
@@ -763,6 +753,32 @@ namespace PubgCrosshair
                 default: // Circle
                     g.FillEllipse(brush, cx - half, cy - half, size, size);
                     break;
+            }
+        }
+    }
+
+    // ============================================================
+    // 红点图标生成（托盘 / 窗口 / exe 图标同源）
+    // ============================================================
+    public static class DotIcon
+    {
+        // 按尺寸绘制红点（透明背景 + (255,60,60) 圆点），返回 Icon（由控件负责销毁）
+        public static Icon Create(int size)
+        {
+            using (Bitmap bmp = new Bitmap(size, size))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.Transparent);
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+                    int d = (int)Math.Round(size * 0.625); // 圆点直径 ≈ 62.5%，与托盘 10/16 一致
+                    int o = (size - d) / 2;
+                    using (SolidBrush brush = new SolidBrush(Color.FromArgb(255, 255, 60, 60)))
+                    {
+                        g.FillEllipse(brush, o, o, d, d);
+                    }
+                }
+                return Icon.FromHandle(bmp.GetHicon());
             }
         }
     }

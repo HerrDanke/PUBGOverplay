@@ -69,6 +69,7 @@ PUBG（绝地求生）地图标记辅助工具，在游戏画面上叠加透明�
 ├───────────────
 ├── Crosshair.cs          # 主程序源码
 ├── Crosshair.exe         # 编译好的可执行文件
+├── pubg.ico              # 应用图标资源（32×32 红点，编译时嵌入）
 ├── README.md             # 使用说明
 ├── HANDOFF.md            # 项目交接文档（状态/构建/OpenSpec 索引）
 ├── LOG.md                # 完整开发记录
@@ -81,7 +82,7 @@ PUBG（绝地求生）地图标记辅助工具，在游戏画面上叠加透明�
 如果修改源码后需要重新编译，运行以下命令（需要 Visual Studio Command Prompt 或 .NET SDK）：
 
 ```batch
-"%SystemRoot%\Microsoft.NET\Framework\v4.0.30319\csc.exe" /target:winexe /reference:System.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll Crosshair.cs
+"%SystemRoot%\Microsoft.NET\Framework\v4.0.30319\csc.exe" /target:winexe /win32icon:pubg.ico /reference:System.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll Crosshair.cs
 ```
 
 ## 坐标文件

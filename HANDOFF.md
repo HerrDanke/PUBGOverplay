@@ -60,10 +60,13 @@ Program            → Main 入口
 ```powershell
 # Windows PowerShell（注意 --% 停止参数解析，避免 /target 被当除法）
 & "$env:SystemRoot\Microsoft.NET\Framework\v4.0.30319\csc.exe" --% /target:winexe `
+  /win32icon:pubg.ico `
   /reference:System.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll Crosshair.cs
 ```
 
 运行 `Crosshair.exe`，托盘出现红色圆点图标。
+
+**应用图标说明**：`pubg.ico`（32×32，透明背景 + 红点 `(255,60,60)`）已入库并在编译时通过 `/win32icon` 嵌入 exe；窗口与托盘图标在运行时由 `DotIcon.Create(size)` 同源生成（16/32px）。如需重新生成 `pubg.ico`（如调整配色），用临时程序调用 `PubgCrosshair.DotIcon.Create(32)` 并 `Icon.Save` 为 `.ico`。
 
 **临时单测方法**（修改后回归）：
 
