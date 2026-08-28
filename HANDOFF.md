@@ -27,7 +27,7 @@ PUBG（绝地求生）地图标记辅助工具：在游戏画面上叠加透明�
 | 编译 | ✅ 通过（.NET Framework v4.0.30319 csc，C# 5，含 /win32icon） |
 | 启动冒烟 | ✅ 进程正常、托盘图标出现 |
 | 自动化验证 | ✅ 临时单测全过（快捷键 21 项 + 外观 53 项 + 图标 8 项 + UI 主题 13 项） |
-| 手工验收 | ✅ 快捷键/外观/图标三个变更通过；⚠️ **modern-dark-ui（浅色界面）待实机验收**（见 §6） |
+| 手工验收 | ✅ 四个变更全部验收通过（见 §6） |
 | OpenSpec | ✅ 4 个变更已归档，4 个主 capability spec，无进行中变更 |
 
 ## 3. 技术要点
@@ -106,9 +106,9 @@ Appearance.Shape=Circle           # Circle/Square/Triangle/Diamond
 | `add-hotkey-settings` | 设置打开、改键生效/旧键失效、冲突提示、重启持久、恢复默认、默认键与损坏 ini 回退 | ✅ 通过 |
 | `add-marker-appearance` | 外观页预览、4 色独立生效、大小 4~20、四形状切换、保存立即生效、与快捷键设置并存 | ✅ 通过 |
 | `add-app-icon` | 资源管理器 / 窗口 / 任务栏红点图标，与托盘一致 | ✅ 通过 |
-| `modern-dark-ui` | 菜单浅色+hover+勾选样式、窗口浅色、页签签名、键帽、等宽数据、**行为回归**（改键/冲突/保存/恢复默认/立即生效） | ⚠️ 待实机验收 |
+| `modern-dark-ui` | 菜单浅色+hover+勾选样式、窗口浅色、页签签名、键帽、等宽数据、**行为回归**（改键/冲突/保存/恢复默认/立即生效） | ✅ 通过 |
 
-验收场景与规范详见 `openspec/specs/` 下对应 capability spec。
+全部四个变更验收通过，无遗留待办。验收场景与规范详见 `openspec/specs/` 下对应 capability spec。
 
 ## 7. OpenSpec 状态
 
