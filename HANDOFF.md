@@ -23,11 +23,11 @@ PUBG（绝地求生）地图标记辅助工具：在游戏画面上叠加透明�
 
 | 项 | 状态 |
 |---|---|
-| 编译 | ✅ 通过（.NET Framework v4.0.30319 csc，C# 5） |
+| 编译 | ✅ 通过（.NET Framework v4.0.30319 csc，C# 5，含 /win32icon） |
 | 启动冒烟 | ✅ 进程正常、托盘图标出现 |
-| 自动化验证 | ✅ 两轮临时单测全过（快捷键 21 项 + 外观 53 项） |
-| 手工验收 | ⚠️ **两处待办**（见 §6） |
-| OpenSpec | ✅ 2 个变更已归档，2 个主 capability spec，无进行中变更 |
+| 自动化验证 | ✅ 临时单测全过（快捷键 21 项 + 外观 53 项 + 图标 8 项） |
+| 手工验收 | ✅ 三个变更全部验收通过（见 §6） |
+| OpenSpec | ✅ 3 个变更已归档，3 个主 capability spec，无进行中变更 |
 
 ## 3. 技术要点
 
@@ -94,14 +94,17 @@ Appearance.Shape=Circle           # Circle/Square/Triangle/Diamond
 - 删除 `hotkeys.ini` 即恢复全部出厂默认
 - 键名用 `Keys` 枚举名（大小写不敏感），颜色为 `R,G,B`（0~255）
 
-## 6. 待办事项
+## 6. 验收状态
 
-| # | 内容 | 来源 |
-|---|---|---|
-| 1 | **手工验收（快捷键）**：托盘「设置」打开、改键生效/旧键失效、冲突提示、重启持久 | 变更 `add-hotkey-settings` 任务 4.2 |
-| 2 | **手工验收（外观）**：外观页预览、4 色独立、大小 4~20、四形状、保存立即生效、重启持久 | 变更 `add-marker-appearance` 任务 4.3 |
+三个变更的手工验收均已逐项完成并通过，无遗留待办：
 
-验收场景与规范详见 `openspec/specs/hotkey-settings/spec.md` 与 `openspec/specs/marker-appearance/spec.md`。
+| 变更 | 验收内容 |
+|---|---|
+| `add-hotkey-settings` | 设置打开、改键生效/旧键失效、冲突提示、重启持久、恢复默认、默认键与损坏 ini 回退 |
+| `add-marker-appearance` | 外观页预览、4 色独立生效、大小 4~20、四形状切换、保存立即生效、与快捷键设置并存 |
+| `add-app-icon` | 资源管理器 / 窗口 / 任务栏红点图标，与托盘一致 |
+
+验收场景与规范详见 `openspec/specs/` 下对应 capability spec。
 
 ## 7. OpenSpec 状态
 
@@ -109,7 +112,8 @@ Appearance.Shape=Circle           # Circle/Square/Triangle/Diamond
 - **主 specs**：
   - `openspec/specs/hotkey-settings/spec.md`（6 条 Requirement）
   - `openspec/specs/marker-appearance/spec.md`（6 条 Requirement）
-- **已归档变更**：`openspec/changes/archive/2026-08-28-add-hotkey-settings/`、`openspec/changes/archive/2026-08-28-add-marker-appearance/`
+  - `openspec/specs/app-icon/spec.md`（2 条 Requirement）
+- **已归档变更**：`2026-08-28-add-hotkey-settings/`、`2026-08-28-add-marker-appearance/`、`2026-08-28-add-app-icon/`（均在 `openspec/changes/archive/`）
 - **进行中变更**：无
 - **新需求流程**：`openspec propose` → 产物审核 → `/opsx:apply` 实现 → `/opsx:archive` 归档（归档自动同步主 specs）
 
