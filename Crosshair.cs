@@ -286,6 +286,8 @@ namespace PubgCrosshair
         {
             trayIcon = new NotifyIcon();
             trayMenu = new ContextMenuStrip();
+            trayMenu.Renderer = new CustomMenuRenderer(); // 深色扁平主题
+            trayMenu.ShowImageMargin = false;             // 无图标菜单，去掉左侧图文边距
 
             // 地图池子菜单
             mapEnabled = new bool[maps.Length];
@@ -784,6 +786,121 @@ namespace PubgCrosshair
     }
 
     // ============================================================
+    // 现代化浅色苹果风 UI 主题（颜色/字体令牌 + 样式助手）
+    // ============================================================
+    public static class UiTheme
+    {
+        // 色彩令牌（浅色苹果风，明亮基底 + 苹果蓝强调）
+        public static readonly Color Bg      = Color.FromArgb(245, 245, 247); // #F5F5F7 窗口/菜单基底
+        public static readonly Color Surface = Color.FromArgb(255, 255, 255); // #FFFFFF 白面（键帽/按钮/预览）
+        public static readonly Color Elevated = Color.FromArgb(232, 232, 237); // #E8E8ED 提升面（hover/选中）
+        public static readonly Color Line     = Color.FromArgb(209, 209, 214); // #D1D1D6 分隔/细边框
+        public static readonly Color Text     = Color.FromArgb(29, 29, 31);    // #1D1D1F 主文本（近黑）
+        public static readonly Color TextDim  = Color.FromArgb(134, 134, 139); // #86868B 次文本（灰）
+        public static readonly Color Accent   = Color.FromArgb(0, 122, 255);   // #007AFF 苹果蓝
+        public static readonly Color AccentPressed = Color.FromArgb(10, 92, 214); // #0A5CD6 苹果蓝按下态
+        // 标记三色（外观页色块）
+        public static readonly Color MarkerRed    = Color.FromArgb(255, 40, 40);
+        public static readonly Color MarkerPurple = Color.FromArgb(160, 40, 200);
+        public static readonly Color MarkerGreen  = Color.FromArgb(40, 200, 40);
+
+        // 字体角色：界面微软雅黑 / 数据等宽 Consolas
+        public static Font UiFont()
+        {
+            return new Font("Microsoft YaHei", 9F);
+        }
+
+        public static Font MonoFont()
+        {
+            return new Font("Consolas", 9F);
+        }
+
+        // 扁平浅色按钮；primary=true 为苹果蓝主操作
+        public static void StyleButton(Button b, bool primary = false)
+        {
+            b.FlatStyle = FlatStyle.Flat;
+            b.FlatAppearance.BorderColor = Line;
+            b.FlatAppearance.BorderSize = 1;
+            if (primary)
+            {
+                b.FlatAppearance.MouseOverBackColor = AccentPressed;
+                b.FlatAppearance.MouseDownBackColor = AccentPressed;
+                b.BackColor = Accent;
+                b.ForeColor = Color.White;
+            }
+            else
+            {
+                b.FlatAppearance.MouseOverBackColor = Elevated;
+                b.FlatAppearance.MouseDownBackColor = Elevated;
+                b.BackColor = Surface;
+                b.ForeColor = Text;
+            }
+        }
+    }
+
+    // ============================================================
+    // 托盘菜单浅色渲染器（扁平浅色 + hover 蓝点指示 + 勾选蓝点）
+    // ============================================================
+    public class CustomMenuRenderer : ToolStripProfessionalRenderer
+    {
+        public CustomMenuRenderer()
+            : base(new UiColorTable())
+        {
+        }
+
+        private class UiColorTable : ProfessionalColorTable
+        {
+            public override Color ToolStripDropDownBackground { get { return UiTheme.Bg; } }
+            public override Color ImageMarginGradientBegin   { get { return UiTheme.Bg; } }
+            public override Color ImageMarginGradientMiddle  { get { return UiTheme.Bg; } }
+            public override Color ImageMarginGradientEnd     { get { return UiTheme.Bg; } }
+            public override Color MenuBorder                 { get { return UiTheme.Line; } }
+            public override Color MenuItemBorder             { get { return UiTheme.Line; } }
+            public override Color MenuItemSelected           { get { return UiTheme.Elevated; } }
+            public override Color MenuItemSelectedGradientBegin { get { return UiTheme.Elevated; } }
+            public override Color MenuItemSelectedGradientEnd   { get { return UiTheme.Elevated; } }
+            public override Color SeparatorDark              { get { return UiTheme.Line; } }
+            public override Color SeparatorLight             { get { return UiTheme.Bg; } }
+        }
+
+        // 文字始终使用主题主文本
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Enabled ? UiTheme.Text : UiTheme.TextDim;
+            base.OnRenderItemText(e);
+        }
+
+        // hover 高亮 + 左侧品牌红点（勾选态非 hover 时以红点呈现）
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            Rectangle rc = new Rectangle(Point.Empty, e.Item.Size);
+            using (SolidBrush bg = new SolidBrush(e.Item.Selected ? UiTheme.Elevated : UiTheme.Bg))
+            {
+                e.Graphics.FillRectangle(bg, rc);
+            }
+            ToolStripMenuItem mi = e.Item as ToolStripMenuItem;
+            if (e.Item.Selected)
+            {
+                int dot = 6;
+                int y = rc.Y + (rc.Height - dot) / 2;
+                using (SolidBrush b = new SolidBrush(UiTheme.Accent))
+                {
+                    e.Graphics.FillEllipse(b, 8, y, dot, dot);
+                }
+            }
+            else if (mi != null && mi.Checked)
+            {
+                int dot = 6;
+                int y = rc.Y + (rc.Height - dot) / 2;
+                using (SolidBrush b = new SolidBrush(UiTheme.Accent))
+                {
+                    e.Graphics.FillEllipse(b, 8, y, dot, dot);
+                }
+            }
+        }
+    }
+
+    // ============================================================
     // 快捷键设置窗口
     // ============================================================
     public class SettingsForm : Form
@@ -823,7 +940,7 @@ namespace PubgCrosshair
             editSize = config.MarkerSize;
             editShape = config.Shape;
 
-            this.Text = "设置";
+            this.Text = "● 设置";
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
@@ -831,14 +948,22 @@ namespace PubgCrosshair
             this.TopMost = true; // 主叠加层为置顶窗口，设置窗需同步置顶
             this.KeyPreview = true;
             this.ClientSize = new Size(430, 358);
-            this.Font = new Font("Microsoft YaHei", 9F);
+            this.BackColor = UiTheme.Bg;   // 浅色苹果主题
+            this.ForeColor = UiTheme.Text;
+            this.Font = UiTheme.UiFont();
 
             // ===== 两个页签 =====
             TabControl tabs = new TabControl();
             tabs.Location = new Point(10, 10);
             tabs.Size = new Size(410, 300);
+            tabs.BackColor = UiTheme.Bg;
+            tabs.ForeColor = UiTheme.Text;
+            tabs.DrawMode = TabDrawMode.OwnerDrawFixed;
+            tabs.DrawItem += TabsDrawItem; // 深色页签条
             TabPage hotkeyPage = new TabPage("快捷键");
             TabPage appearancePage = new TabPage("标记外观");
+            hotkeyPage.BackColor = UiTheme.Bg;
+            appearancePage.BackColor = UiTheme.Bg;
             tabs.TabPages.Add(hotkeyPage);
             tabs.TabPages.Add(appearancePage);
             tabs.SelectedIndexChanged += (s, e) => StopListening(); // 切页终止监听
@@ -851,6 +976,7 @@ namespace PubgCrosshair
             restoreBtn.Text = "恢复默认";
             restoreBtn.Location = new Point(20, 318);
             restoreBtn.Size = new Size(90, 30);
+            UiTheme.StyleButton(restoreBtn);
             restoreBtn.Click += (s, e) => { StopListening(); RestoreDefaults(); };
             this.Controls.Add(restoreBtn);
 
@@ -858,6 +984,7 @@ namespace PubgCrosshair
             okBtn.Text = "确定";
             okBtn.Location = new Point(250, 318);
             okBtn.Size = new Size(80, 30);
+            UiTheme.StyleButton(okBtn, primary: true); // 主操作：品牌红
             okBtn.Click += (s, e) => SaveAndClose();
             this.Controls.Add(okBtn);
 
@@ -865,8 +992,31 @@ namespace PubgCrosshair
             cancelBtn.Text = "取消";
             cancelBtn.Location = new Point(340, 318);
             cancelBtn.Size = new Size(80, 30);
+            UiTheme.StyleButton(cancelBtn);
             cancelBtn.Click += (s, e) => { StopListening(); this.DialogResult = DialogResult.Cancel; this.Close(); };
             this.Controls.Add(cancelBtn);
+        }
+
+        // ===== 深色页签条：未选中 Surface+TextDim，选中 Elevated+Text+底部品牌红指示 =====
+        private static void TabsDrawItem(object sender, DrawItemEventArgs e)
+        {
+            TabControl tc = (TabControl)sender;
+            Rectangle rc = tc.GetTabRect(e.Index);
+            bool selected = e.Index == tc.SelectedIndex;
+            using (SolidBrush bg = new SolidBrush(selected ? UiTheme.Elevated : UiTheme.Surface))
+            {
+                e.Graphics.FillRectangle(bg, rc);
+            }
+            if (selected)
+            {
+                using (SolidBrush accent = new SolidBrush(UiTheme.Accent))
+                {
+                    e.Graphics.FillRectangle(accent, rc.X, rc.Bottom - 2, rc.Width, 2);
+                }
+            }
+            TextRenderer.DrawText(e.Graphics, tc.TabPages[e.Index].Text, tc.Font, rc,
+                selected ? UiTheme.Text : UiTheme.TextDim,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         }
 
         // ===== 快捷键页 =====
@@ -884,14 +1034,19 @@ namespace PubgCrosshair
                 nameLabel.Location = new Point(14, y + 4);
                 nameLabel.Size = new Size(150, 22);
                 nameLabel.TextAlign = ContentAlignment.MiddleLeft;
+                nameLabel.ForeColor = UiTheme.Text;
                 page.Controls.Add(nameLabel);
 
+                // 键帽样式：深色表面 + 等宽字体
                 Label keyLabel = new Label();
                 keyLabel.Text = HotkeyNames.JoinDisplay(edits[i].KeysList);
                 keyLabel.Location = new Point(176, y);
                 keyLabel.Size = new Size(128, 26);
                 keyLabel.TextAlign = ContentAlignment.MiddleCenter;
                 keyLabel.BorderStyle = BorderStyle.FixedSingle;
+                keyLabel.BackColor = UiTheme.Surface;
+                keyLabel.ForeColor = UiTheme.Text;
+                keyLabel.Font = UiTheme.MonoFont();
                 page.Controls.Add(keyLabel);
                 keyLabels[i] = keyLabel;
 
@@ -900,6 +1055,7 @@ namespace PubgCrosshair
                 modifyBtn.Text = "修改";
                 modifyBtn.Location = new Point(314, y);
                 modifyBtn.Size = new Size(80, 26);
+                UiTheme.StyleButton(modifyBtn);
                 modifyBtn.Click += (s, e) => StartListening(idx);
                 page.Controls.Add(modifyBtn);
                 modifyButtons[i] = modifyBtn;
@@ -909,6 +1065,7 @@ namespace PubgCrosshair
             statusLabel.Text = "点击「修改」后按新键绑定，按 Esc 取消；绑定后立即生效。";
             statusLabel.Location = new Point(14, 150);
             statusLabel.Size = new Size(380, 22);
+            statusLabel.ForeColor = UiTheme.TextDim;
             page.Controls.Add(statusLabel);
         }
 
@@ -928,12 +1085,16 @@ namespace PubgCrosshair
                 nameLabel.Text = colorNames[i];
                 nameLabel.Location = new Point(16, y + 4);
                 nameLabel.Size = new Size(70, 22);
+                nameLabel.ForeColor = UiTheme.Text;
                 page.Controls.Add(nameLabel);
 
                 Button colorBtn = new Button();
                 colorBtn.Text = "";
                 colorBtn.BackColor = editColors[i];
                 colorBtn.FlatStyle = FlatStyle.Flat;
+                colorBtn.FlatAppearance.BorderColor = UiTheme.Line;
+                colorBtn.FlatAppearance.BorderSize = 1;
+                colorBtn.FlatAppearance.MouseOverBackColor = UiTheme.Elevated;
                 colorBtn.Location = new Point(92, y);
                 colorBtn.Size = new Size(56, 26);
                 colorBtn.Click += (s, e) => ChooseColor(idx);
@@ -944,6 +1105,8 @@ namespace PubgCrosshair
                 rgbLabel.Text = ColorText(editColors[i]);
                 rgbLabel.Location = new Point(154, y + 4);
                 rgbLabel.Size = new Size(130, 22);
+                rgbLabel.ForeColor = UiTheme.TextDim;
+                rgbLabel.Font = UiTheme.MonoFont(); // 数据等宽
                 page.Controls.Add(rgbLabel);
                 rgbLabels[i] = rgbLabel;
             }
@@ -953,6 +1116,7 @@ namespace PubgCrosshair
             sizeName.Text = "大小";
             sizeName.Location = new Point(16, 152);
             sizeName.Size = new Size(50, 22);
+            sizeName.ForeColor = UiTheme.Text;
             page.Controls.Add(sizeName);
 
             sizeTrack = new TrackBar();
@@ -960,6 +1124,7 @@ namespace PubgCrosshair
             sizeTrack.Maximum = 20;
             sizeTrack.Value = editSize;
             sizeTrack.TickFrequency = 2;
+            sizeTrack.BackColor = UiTheme.Bg; // TrackBar 系统绘制，统一浅色背景
             sizeTrack.Location = new Point(70, 146);
             sizeTrack.Size = new Size(180, 30);
             sizeTrack.Scroll += (s, e) => {
@@ -973,6 +1138,8 @@ namespace PubgCrosshair
             sizeLabel.Text = editSize + " px";
             sizeLabel.Location = new Point(256, 152);
             sizeLabel.Size = new Size(60, 22);
+            sizeLabel.ForeColor = UiTheme.Text;
+            sizeLabel.Font = UiTheme.MonoFont(); // 数据等宽
             page.Controls.Add(sizeLabel);
 
             // 形状
@@ -980,6 +1147,7 @@ namespace PubgCrosshair
             shapeName.Text = "形状";
             shapeName.Location = new Point(16, 190);
             shapeName.Size = new Size(50, 22);
+            shapeName.ForeColor = UiTheme.Text;
             page.Controls.Add(shapeName);
 
             string[] shapeNames = new string[] { "圆形", "方形", "三角形", "菱形" };
@@ -992,6 +1160,8 @@ namespace PubgCrosshair
                 rb.Text = shapeNames[i];
                 rb.Location = new Point(rx, 190);
                 rb.Size = new Size(78, 24);
+                rb.ForeColor = UiTheme.Text;
+                rb.BackColor = UiTheme.Bg;
                 rb.Checked = ((int)editShape) == i;
                 rb.CheckedChanged += (sender, e2) => {
                     if (((RadioButton)sender).Checked)
@@ -1010,19 +1180,24 @@ namespace PubgCrosshair
             previewName.Text = "预览";
             previewName.Location = new Point(16, 222);
             previewName.Size = new Size(50, 22);
+            previewName.ForeColor = UiTheme.Text;
             page.Controls.Add(previewName);
 
             previewPanel = new Panel();
             previewPanel.Location = new Point(70, 216);
             previewPanel.Size = new Size(324, 40);
-            previewPanel.BorderStyle = BorderStyle.FixedSingle;
-            previewPanel.Paint += PreviewPaint;
+            previewPanel.BackColor = UiTheme.Surface;
+            previewPanel.Paint += PreviewPaint; // 边框在 PreviewPaint 绘制
             page.Controls.Add(previewPanel);
         }
 
         private void PreviewPaint(object sender, PaintEventArgs e)
         {
             Graphics g = e.Graphics;
+            using (Pen pen = new Pen(UiTheme.Line)) // 细边框
+            {
+                g.DrawRectangle(pen, 0, 0, previewPanel.Width - 1, previewPanel.Height - 1);
+            }
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             using (SolidBrush brush = new SolidBrush(editColors[0])) // 以常规色预览
             {
