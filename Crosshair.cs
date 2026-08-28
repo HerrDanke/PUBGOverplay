@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Text;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -17,6 +20,12 @@ namespace PubgCrosshair
         private ContextMenuStrip trayMenu;
         private bool[] mapEnabled;
         private ToolStripMenuItem[] mapMenuItems;
+        private ToolStripMenuItem toggleMenuItem;   // 显示/隐藏标记菜单项（动态文字）
+
+        // ===== 快捷键配置 =====
+        private HotkeyConfig hotkeys;
+        private Dictionary<Keys, Action> keyActions = new Dictionary<Keys, Action>();
+        private bool settingsOpen = false;          // 设置窗口打开期间钩子暂停消费
 
         // ===== 地图数据 =====
         private class MapData
@@ -134,11 +143,6 @@ namespace PubgCrosshair
         private const uint LWA_ALPHA = 0x2;
         private const uint LWA_COLORKEY = 0x1;
 
-        private const uint VK_OEM_3 = 0xC0;
-        private const uint VK_F2 = 0x71;
-        private const uint VK_LEFT = 0x25;
-        private const uint VK_RIGHT = 0x27;
-
         public OverlayForm()
         {
             this.FormBorderStyle = FormBorderStyle.None;
@@ -154,6 +158,9 @@ namespace PubgCrosshair
             this.TransparencyKey = Color.Black;
             this.AllowTransparency = true;
             this.DoubleBuffered = true;
+
+            hotkeys = HotkeyConfig.Load();
+            RebuildKeyActions();
 
             SetupTrayIcon();
 
@@ -189,23 +196,14 @@ namespace PubgCrosshair
         {
             if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
             {
-                int vkCode = Marshal.ReadInt32(lParam);
+                // 设置窗口打开期间不消费任何按键，避免监听「按新键」时误触发
+                if (settingsOpen) return CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
 
-                if (vkCode == VK_OEM_3 || vkCode == VK_F2)
+                Keys key = (Keys)Marshal.ReadInt32(lParam);
+                Action action;
+                if (keyActions.TryGetValue(key, out action))
                 {
-                    this.Toggle();
-                    return (IntPtr)1;
-                }
-
-                if (vkCode == VK_LEFT)
-                {
-                    this.SwitchMap(-1);
-                    return (IntPtr)1;
-                }
-
-                if (vkCode == VK_RIGHT)
-                {
-                    this.SwitchMap(1);
+                    action();
                     return (IntPtr)1;
                 }
             }
@@ -234,6 +232,48 @@ namespace PubgCrosshair
                 mapNameTimer.Start();
                 trayIcon.Text = maps[currentMap].Name + " - 已显示";
                 this.Invalidate();
+            }
+        }
+
+        // ============================================================
+        // 快捷键
+        // ============================================================
+        private void RebuildKeyActions()
+        {
+            keyActions.Clear();
+            foreach (HotkeyAction act in hotkeys.Actions)
+            {
+                Action fn = null;
+                if (act.Name == "Toggle") fn = this.Toggle;
+                else if (act.Name == "PrevMap") fn = () => this.SwitchMap(-1);
+                else if (act.Name == "NextMap") fn = () => this.SwitchMap(1);
+                if (fn == null) continue;
+                foreach (Keys k in act.KeysList)
+                {
+                    if (k != Keys.None) keyActions[k] = fn;
+                }
+            }
+        }
+
+        // 打开设置窗口（模态）；保存成功后立即重建键映射使其生效
+        private void OpenSettings()
+        {
+            settingsOpen = true;
+            try
+            {
+                using (SettingsForm f = new SettingsForm(hotkeys))
+                {
+                    f.StartPosition = FormStartPosition.CenterScreen;
+                    if (f.ShowDialog() == DialogResult.OK)
+                    {
+                        RebuildKeyActions();
+                        this.Invalidate(); // 外观修改后立即重绘
+                    }
+                }
+            }
+            finally
+            {
+                settingsOpen = false;
             }
         }
 
@@ -286,7 +326,10 @@ namespace PubgCrosshair
             };
             trayMenu.Items.Add(mapPoolItem);
 
-            trayMenu.Items.Add("显示标记", null, (s, e) => { this.Toggle(); });
+            toggleMenuItem = new ToolStripMenuItem("显示标记", null, (s, e) => { this.Toggle(); });
+            trayMenu.Items.Add(toggleMenuItem);
+
+            trayMenu.Items.Add("设置", null, (s, e) => { this.OpenSettings(); });
             trayMenu.Items.Add("退出", null, (s, e) => { Application.Exit(); });
 
             using (Bitmap bmp = new Bitmap(16, 16))
@@ -308,7 +351,7 @@ namespace PubgCrosshair
 
             // 右键菜单（原生 NotifyIcon 弹出，自动消失）
             trayMenu.Opening += (s, e) => {
-                trayMenu.Items[1].Text = showDots ? "隐藏标记" : "显示标记";
+                toggleMenuItem.Text = showDots ? "隐藏标记" : "显示标记";
             };
             trayIcon.ContextMenuStrip = trayMenu;
         }
@@ -343,20 +386,15 @@ namespace PubgCrosshair
             if (showDots)
             {
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
-                Color[] dotColors = new Color[] {
-                    Color.FromArgb(255, 255, 40, 40),   // 0:红 - 密室
-                    Color.FromArgb(255, 160, 40, 200),  // 1:紫 - 撬棍房
-                    Color.FromArgb(255, 40, 200, 40),   // 2:绿 - 熊洞
-                };
                 for (int i = 0; i < map.Dots.GetLength(0); i++)
                 {
-                    int type = (map.DotTypes != null && i < map.DotTypes.Length) ? map.DotTypes[i] : 0;
-                    if (type < 0 || type >= dotColors.Length) type = 0;
-                    using (SolidBrush brush = new SolidBrush(dotColors[type]))
+                    Color c = MarkerRenderer.PickColor(hotkeys.NormalColor, hotkeys.RoomColor,
+                        hotkeys.CrowbarColor, hotkeys.BearColor, map.DotTypes, i);
+                    using (SolidBrush brush = new SolidBrush(c))
                     {
                         float px = offX + map.Dots[i, 0] * scale;
                         float py = offY + map.Dots[i, 1] * scale;
-                        g.FillEllipse(brush, px - 4, py - 4, 8, 8);
+                        MarkerRenderer.Draw(g, brush, px, py, hotkeys.MarkerSize, hotkeys.Shape);
                     }
                 }
             }
@@ -425,6 +463,700 @@ namespace PubgCrosshair
                 trayIcon.Dispose();
             }
             base.OnFormClosed(e);
+        }
+    }
+
+    // ============================================================
+    // 键名转换（Keys ↔ 配置文本 / 显示文本）
+    // ============================================================
+    public static class HotkeyNames
+    {
+        // 特殊键的友好显示名（默认 KeysConverter 输出不够友好，如 Oemtilde→"OEM 3"）
+        private static readonly Dictionary<Keys, string> friendlyNames = new Dictionary<Keys, string>
+        {
+            { Keys.Oemtilde, "`" },
+            { Keys.OemOpenBrackets, "[" },
+            { Keys.OemCloseBrackets, "]" },
+            { Keys.OemPipe, "\\" },
+            { Keys.OemMinus, "-" },
+            { Keys.Oemplus, "=" },
+            { Keys.OemSemicolon, ";" },
+            { Keys.OemQuotes, "'" },
+            { Keys.Oemcomma, "," },
+            { Keys.OemPeriod, "." },
+            { Keys.OemQuestion, "/" },
+            { Keys.Back, "Backspace" },
+            { Keys.Return, "Enter" },
+            { Keys.Left, "←" },
+            { Keys.Right, "→" },
+            { Keys.Up, "↑" },
+            { Keys.Down, "↓" },
+        };
+
+        private static readonly KeysConverter converter = new KeysConverter();
+
+        // 写入配置文件的键名（Keys 枚举名，无修饰位）
+        public static string ToConfigName(Keys key)
+        {
+            return ((Keys)((int)key & (int)Keys.KeyCode)).ToString();
+        }
+
+        // 界面显示名
+        public static string ToDisplayName(Keys key)
+        {
+            string friendly;
+            if (friendlyNames.TryGetValue(key, out friendly)) return friendly;
+            string s = converter.ConvertToString(key);
+            return string.IsNullOrEmpty(s) ? key.ToString() : s;
+        }
+
+        // 从配置键名解析；非法返回 Keys.None
+        public static Keys FromConfigName(string name)
+        {
+            Keys k;
+            if (Enum.TryParse<Keys>(name.Trim(), true, out k))
+                return (Keys)((int)k & (int)Keys.KeyCode);
+            return Keys.None;
+        }
+
+        // 键列表显示文本，如 "` 或 F2"
+        public static string JoinDisplay(IEnumerable<Keys> keys)
+        {
+            return string.Join(" 或 ", keys.Select(k => ToDisplayName(k)).ToArray());
+        }
+    }
+
+    // ============================================================
+    // 标记形状
+    // ============================================================
+    public enum MarkerShape
+    {
+        Circle,    // 圆形（默认）
+        Square,    // 方形
+        Triangle,  // 三角形
+        Diamond,   // 菱形
+    }
+
+    // ============================================================
+    // 快捷键动作（纯数据）
+    // ============================================================
+    public class HotkeyAction
+    {
+        public string Name;          // 动作标识（ini 行键名）
+        public string DisplayName;   // 界面显示名
+        public Keys[] DefaultKeys;   // 出厂默认键
+        public List<Keys> KeysList;  // 当前键（可变）
+
+        public HotkeyAction(string name, string displayName, params Keys[] defaultKeys)
+        {
+            Name = name;
+            DisplayName = displayName;
+            DefaultKeys = defaultKeys;
+            KeysList = new List<Keys>(defaultKeys);
+        }
+    }
+
+    // ============================================================
+    // 快捷键配置读写（exe 同目录 hotkeys.ini）
+    // ============================================================
+    public class HotkeyConfig
+    {
+        public const string FileName = "hotkeys.ini";
+        public HotkeyAction[] Actions;
+
+        // ===== 标记外观 =====
+        public Color NormalColor;    // 常规色（无类型区分的地图）
+        public Color RoomColor;      // 密室
+        public Color CrowbarColor;   // 撬棍房
+        public Color BearColor;      // 熊洞
+        public int MarkerSize;       // 标记直径（4~20 px）
+        public MarkerShape Shape;    // 标记形状
+
+        public HotkeyConfig()
+        {
+            Actions = new HotkeyAction[] {
+                new HotkeyAction("Toggle",  "显示/隐藏标记", Keys.Oemtilde, Keys.F2),
+                new HotkeyAction("PrevMap", "切换到上一张地图", Keys.Left),
+                new HotkeyAction("NextMap", "切换到下一张地图", Keys.Right),
+            };
+
+            NormalColor = Color.FromArgb(255, 255, 40, 40);
+            RoomColor = Color.FromArgb(255, 255, 40, 40);
+            CrowbarColor = Color.FromArgb(255, 160, 40, 200);
+            BearColor = Color.FromArgb(255, 40, 200, 40);
+            MarkerSize = 8;
+            Shape = MarkerShape.Circle;
+        }
+
+        // 加载配置；文件缺失/损坏时逐项回退默认值（首次运行不落盘）
+        public static HotkeyConfig Load()
+        {
+            HotkeyConfig cfg = new HotkeyConfig();
+            try
+            {
+                string path = Path.Combine(Application.StartupPath, FileName);
+                if (!File.Exists(path)) return cfg;
+
+                foreach (string line in File.ReadAllLines(path))
+                {
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string name = line.Substring(0, eq).Trim();
+                    string value = line.Substring(eq + 1).Trim();
+
+                    if (name.StartsWith("Appearance.", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ApplyAppearance(cfg, name, value);
+                        continue;
+                    }
+
+                    HotkeyAction act = cfg.FindAction(name);
+                    if (act == null) continue; // 未知动作名：忽略该行
+
+                    List<Keys> keys = ParseKeyList(value);
+                    if (keys.Count > 0) act.KeysList = keys; // 全非法键名：保持默认
+                }
+            }
+            catch { /* 读取异常：保持默认 */ }
+            return cfg;
+        }
+
+        public void Save()
+        {
+            try
+            {
+                List<string> lines = new List<string>();
+                foreach (HotkeyAction act in Actions)
+                    lines.Add(act.Name + "=" + string.Join(",", act.KeysList.Select(k => HotkeyNames.ToConfigName(k)).ToArray()));
+
+                lines.Add("Appearance.Normal=" + ColorToConfig(NormalColor));
+                lines.Add("Appearance.Room=" + ColorToConfig(RoomColor));
+                lines.Add("Appearance.Crowbar=" + ColorToConfig(CrowbarColor));
+                lines.Add("Appearance.Bear=" + ColorToConfig(BearColor));
+                lines.Add("Appearance.Size=" + MarkerSize);
+                lines.Add("Appearance.Shape=" + Shape);
+
+                File.WriteAllLines(Path.Combine(Application.StartupPath, FileName), lines.ToArray());
+            }
+            catch { /* 写入失败不阻断程序 */ }
+        }
+
+        public void RestoreDefaults()
+        {
+            foreach (HotkeyAction act in Actions)
+                act.KeysList = new List<Keys>(act.DefaultKeys);
+
+            NormalColor = Color.FromArgb(255, 255, 40, 40);
+            RoomColor = Color.FromArgb(255, 255, 40, 40);
+            CrowbarColor = Color.FromArgb(255, 160, 40, 200);
+            BearColor = Color.FromArgb(255, 40, 200, 40);
+            MarkerSize = 8;
+            Shape = MarkerShape.Circle;
+        }
+
+        // ===== 外观配置解析（缺失/非法逐项回退默认）=====
+        private static void ApplyAppearance(HotkeyConfig cfg, string name, string value)
+        {
+            if (name.Equals("Appearance.Normal", StringComparison.OrdinalIgnoreCase))
+                cfg.NormalColor = ParseColor(value, cfg.NormalColor);
+            else if (name.Equals("Appearance.Room", StringComparison.OrdinalIgnoreCase))
+                cfg.RoomColor = ParseColor(value, cfg.RoomColor);
+            else if (name.Equals("Appearance.Crowbar", StringComparison.OrdinalIgnoreCase))
+                cfg.CrowbarColor = ParseColor(value, cfg.CrowbarColor);
+            else if (name.Equals("Appearance.Bear", StringComparison.OrdinalIgnoreCase))
+                cfg.BearColor = ParseColor(value, cfg.BearColor);
+            else if (name.Equals("Appearance.Size", StringComparison.OrdinalIgnoreCase))
+            {
+                int size;
+                if (int.TryParse(value, out size))
+                    cfg.MarkerSize = Math.Max(4, Math.Min(20, size));
+            }
+            else if (name.Equals("Appearance.Shape", StringComparison.OrdinalIgnoreCase))
+            {
+                MarkerShape sh;
+                if (Enum.TryParse<MarkerShape>(value, true, out sh))
+                    cfg.Shape = sh;
+            }
+        }
+
+        // "R,G,B" → Color；非法返回 fallback
+        public static Color ParseColor(string value, Color fallback)
+        {
+            string[] parts = value.Split(',');
+            int r, g, b;
+            if (parts.Length == 3 &&
+                int.TryParse(parts[0].Trim(), out r) &&
+                int.TryParse(parts[1].Trim(), out g) &&
+                int.TryParse(parts[2].Trim(), out b) &&
+                r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255)
+                return Color.FromArgb(255, r, g, b);
+            return fallback;
+        }
+
+        public static string ColorToConfig(Color c)
+        {
+            return c.R + "," + c.G + "," + c.B;
+        }
+
+        private HotkeyAction FindAction(string name)
+        {
+            foreach (HotkeyAction act in Actions)
+                if (string.Equals(act.Name, name, StringComparison.OrdinalIgnoreCase))
+                    return act;
+            return null;
+        }
+
+        private static List<Keys> ParseKeyList(string value)
+        {
+            List<Keys> list = new List<Keys>();
+            foreach (string part in value.Split(','))
+            {
+                Keys k = HotkeyNames.FromConfigName(part);
+                if (k != Keys.None) list.Add(k);
+            }
+            return list;
+        }
+    }
+
+    // ============================================================
+    // 标记绘制（类型取色 + 形状渲染）
+    // ============================================================
+    public static class MarkerRenderer
+    {
+        // 按类型取色：无类型地图用常规色；type 0/1/2 分别用密室/撬棍房/熊洞色
+        public static Color PickColor(Color normal, Color room, Color crowbar, Color bear, byte[] types, int index)
+        {
+            if (types == null) return normal;
+            int type = (index < types.Length) ? types[index] : 0;
+            switch (type)
+            {
+                case 1: return crowbar;
+                case 2: return bear;
+                default: return room;
+            }
+        }
+
+        // 以 (cx, cy) 为中心绘制 size×size 的标记（形状外接包围盒一致）
+        public static void Draw(Graphics g, SolidBrush brush, float cx, float cy, float size, MarkerShape shape)
+        {
+            float half = size / 2f;
+            switch (shape)
+            {
+                case MarkerShape.Square:
+                    g.FillRectangle(brush, cx - half, cy - half, size, size);
+                    break;
+                case MarkerShape.Triangle:
+                    g.FillPolygon(brush, new PointF[] {
+                        new PointF(cx, cy - half),        // 顶点（上）
+                        new PointF(cx - half, cy + half), // 左下
+                        new PointF(cx + half, cy + half), // 右下
+                    });
+                    break;
+                case MarkerShape.Diamond:
+                    g.FillPolygon(brush, new PointF[] {
+                        new PointF(cx, cy - half), // 上
+                        new PointF(cx + half, cy), // 右
+                        new PointF(cx, cy + half), // 下
+                        new PointF(cx - half, cy), // 左
+                    });
+                    break;
+                default: // Circle
+                    g.FillEllipse(brush, cx - half, cy - half, size, size);
+                    break;
+            }
+        }
+    }
+
+    // ============================================================
+    // 快捷键设置窗口
+    // ============================================================
+    public class SettingsForm : Form
+    {
+        private HotkeyConfig config;      // 宿主配置引用（确定时才写回）
+        private HotkeyAction[] edits;     // 快捷键可编辑副本（取消/关闭不影响原配置）
+        private Label[] keyLabels;
+        private Button[] modifyButtons;
+        private Label statusLabel;
+        private int listeningIndex = -1;  // 正在监听的动作索引，-1 表示未监听
+
+        // ===== 标记外观编辑副本 =====
+        private static readonly string[] colorNames = new string[] { "常规色", "密室", "撬棍房", "熊洞" };
+        private Color[] editColors;       // 顺序与 colorNames 一致
+        private int editSize;
+        private MarkerShape editShape;
+        private Button[] colorButtons;
+        private Label[] rgbLabels;
+        private TrackBar sizeTrack;
+        private Label sizeLabel;
+        private RadioButton[] shapeRadios;
+        private Panel previewPanel;
+
+        public SettingsForm(HotkeyConfig config)
+        {
+            this.config = config;
+
+            // 深拷贝当前配置作为可编辑副本
+            edits = new HotkeyAction[config.Actions.Length];
+            for (int i = 0; i < edits.Length; i++)
+            {
+                HotkeyAction src = config.Actions[i];
+                edits[i] = new HotkeyAction(src.Name, src.DisplayName, src.DefaultKeys);
+                edits[i].KeysList = new List<Keys>(src.KeysList);
+            }
+            editColors = new Color[] { config.NormalColor, config.RoomColor, config.CrowbarColor, config.BearColor };
+            editSize = config.MarkerSize;
+            editShape = config.Shape;
+
+            this.Text = "设置";
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+            this.ShowInTaskbar = false;
+            this.TopMost = true; // 主叠加层为置顶窗口，设置窗需同步置顶
+            this.KeyPreview = true;
+            this.ClientSize = new Size(430, 358);
+            this.Font = new Font("Microsoft YaHei", 9F);
+
+            // ===== 两个页签 =====
+            TabControl tabs = new TabControl();
+            tabs.Location = new Point(10, 10);
+            tabs.Size = new Size(410, 300);
+            TabPage hotkeyPage = new TabPage("快捷键");
+            TabPage appearancePage = new TabPage("标记外观");
+            tabs.TabPages.Add(hotkeyPage);
+            tabs.TabPages.Add(appearancePage);
+            tabs.SelectedIndexChanged += (s, e) => StopListening(); // 切页终止监听
+            this.Controls.Add(tabs);
+
+            BuildHotkeyPage(hotkeyPage);
+            BuildAppearancePage(appearancePage);
+
+            Button restoreBtn = new Button();
+            restoreBtn.Text = "恢复默认";
+            restoreBtn.Location = new Point(20, 318);
+            restoreBtn.Size = new Size(90, 30);
+            restoreBtn.Click += (s, e) => { StopListening(); RestoreDefaults(); };
+            this.Controls.Add(restoreBtn);
+
+            Button okBtn = new Button();
+            okBtn.Text = "确定";
+            okBtn.Location = new Point(250, 318);
+            okBtn.Size = new Size(80, 30);
+            okBtn.Click += (s, e) => SaveAndClose();
+            this.Controls.Add(okBtn);
+
+            Button cancelBtn = new Button();
+            cancelBtn.Text = "取消";
+            cancelBtn.Location = new Point(340, 318);
+            cancelBtn.Size = new Size(80, 30);
+            cancelBtn.Click += (s, e) => { StopListening(); this.DialogResult = DialogResult.Cancel; this.Close(); };
+            this.Controls.Add(cancelBtn);
+        }
+
+        // ===== 快捷键页 =====
+        private void BuildHotkeyPage(TabPage page)
+        {
+            keyLabels = new Label[edits.Length];
+            modifyButtons = new Button[edits.Length];
+
+            for (int i = 0; i < edits.Length; i++)
+            {
+                int y = 14 + i * 42;
+
+                Label nameLabel = new Label();
+                nameLabel.Text = edits[i].DisplayName;
+                nameLabel.Location = new Point(14, y + 4);
+                nameLabel.Size = new Size(150, 22);
+                nameLabel.TextAlign = ContentAlignment.MiddleLeft;
+                page.Controls.Add(nameLabel);
+
+                Label keyLabel = new Label();
+                keyLabel.Text = HotkeyNames.JoinDisplay(edits[i].KeysList);
+                keyLabel.Location = new Point(176, y);
+                keyLabel.Size = new Size(128, 26);
+                keyLabel.TextAlign = ContentAlignment.MiddleCenter;
+                keyLabel.BorderStyle = BorderStyle.FixedSingle;
+                page.Controls.Add(keyLabel);
+                keyLabels[i] = keyLabel;
+
+                int idx = i;
+                Button modifyBtn = new Button();
+                modifyBtn.Text = "修改";
+                modifyBtn.Location = new Point(314, y);
+                modifyBtn.Size = new Size(80, 26);
+                modifyBtn.Click += (s, e) => StartListening(idx);
+                page.Controls.Add(modifyBtn);
+                modifyButtons[i] = modifyBtn;
+            }
+
+            statusLabel = new Label();
+            statusLabel.Text = "点击「修改」后按新键绑定，按 Esc 取消；绑定后立即生效。";
+            statusLabel.Location = new Point(14, 150);
+            statusLabel.Size = new Size(380, 22);
+            page.Controls.Add(statusLabel);
+        }
+
+        // ===== 标记外观页 =====
+        private void BuildAppearancePage(TabPage page)
+        {
+            page.AutoScroll = true; // 内容超出时兜底滚动
+            colorButtons = new Button[colorNames.Length];
+            rgbLabels = new Label[colorNames.Length];
+
+            for (int i = 0; i < colorNames.Length; i++)
+            {
+                int y = 10 + i * 34;
+                int idx = i;
+
+                Label nameLabel = new Label();
+                nameLabel.Text = colorNames[i];
+                nameLabel.Location = new Point(16, y + 4);
+                nameLabel.Size = new Size(70, 22);
+                page.Controls.Add(nameLabel);
+
+                Button colorBtn = new Button();
+                colorBtn.Text = "";
+                colorBtn.BackColor = editColors[i];
+                colorBtn.FlatStyle = FlatStyle.Flat;
+                colorBtn.Location = new Point(92, y);
+                colorBtn.Size = new Size(56, 26);
+                colorBtn.Click += (s, e) => ChooseColor(idx);
+                page.Controls.Add(colorBtn);
+                colorButtons[i] = colorBtn;
+
+                Label rgbLabel = new Label();
+                rgbLabel.Text = ColorText(editColors[i]);
+                rgbLabel.Location = new Point(154, y + 4);
+                rgbLabel.Size = new Size(130, 22);
+                page.Controls.Add(rgbLabel);
+                rgbLabels[i] = rgbLabel;
+            }
+
+            // 大小（直径 4~20）
+            Label sizeName = new Label();
+            sizeName.Text = "大小";
+            sizeName.Location = new Point(16, 152);
+            sizeName.Size = new Size(50, 22);
+            page.Controls.Add(sizeName);
+
+            sizeTrack = new TrackBar();
+            sizeTrack.Minimum = 4;
+            sizeTrack.Maximum = 20;
+            sizeTrack.Value = editSize;
+            sizeTrack.TickFrequency = 2;
+            sizeTrack.Location = new Point(70, 146);
+            sizeTrack.Size = new Size(180, 30);
+            sizeTrack.Scroll += (s, e) => {
+                editSize = sizeTrack.Value;
+                sizeLabel.Text = editSize + " px";
+                previewPanel.Invalidate();
+            };
+            page.Controls.Add(sizeTrack);
+
+            sizeLabel = new Label();
+            sizeLabel.Text = editSize + " px";
+            sizeLabel.Location = new Point(256, 152);
+            sizeLabel.Size = new Size(60, 22);
+            page.Controls.Add(sizeLabel);
+
+            // 形状
+            Label shapeName = new Label();
+            shapeName.Text = "形状";
+            shapeName.Location = new Point(16, 190);
+            shapeName.Size = new Size(50, 22);
+            page.Controls.Add(shapeName);
+
+            string[] shapeNames = new string[] { "圆形", "方形", "三角形", "菱形" };
+            shapeRadios = new RadioButton[shapeNames.Length];
+            int rx = 70;
+            for (int i = 0; i < shapeRadios.Length; i++)
+            {
+                int s = i;
+                RadioButton rb = new RadioButton();
+                rb.Text = shapeNames[i];
+                rb.Location = new Point(rx, 190);
+                rb.Size = new Size(78, 24);
+                rb.Checked = ((int)editShape) == i;
+                rb.CheckedChanged += (sender, e2) => {
+                    if (((RadioButton)sender).Checked)
+                    {
+                        editShape = (MarkerShape)s;
+                        previewPanel.Invalidate();
+                    }
+                };
+                page.Controls.Add(rb);
+                shapeRadios[i] = rb;
+                rx += 78;
+            }
+
+            // 预览
+            Label previewName = new Label();
+            previewName.Text = "预览";
+            previewName.Location = new Point(16, 222);
+            previewName.Size = new Size(50, 22);
+            page.Controls.Add(previewName);
+
+            previewPanel = new Panel();
+            previewPanel.Location = new Point(70, 216);
+            previewPanel.Size = new Size(324, 40);
+            previewPanel.BorderStyle = BorderStyle.FixedSingle;
+            previewPanel.Paint += PreviewPaint;
+            page.Controls.Add(previewPanel);
+        }
+
+        private void PreviewPaint(object sender, PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            using (SolidBrush brush = new SolidBrush(editColors[0])) // 以常规色预览
+            {
+                float size = Math.Max(editSize * 2.0f, 12f); // 放大便于观察，最小 12
+                MarkerRenderer.Draw(g, brush, previewPanel.Width / 2f, 20f, size, editShape);
+            }
+        }
+
+        private static string ColorText(Color c)
+        {
+            return c.R + "," + c.G + "," + c.B;
+        }
+
+        private void ChooseColor(int index)
+        {
+            StopListening();
+            using (ColorDialog dlg = new ColorDialog())
+            {
+                dlg.Color = editColors[index];
+                dlg.FullOpen = true;
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    editColors[index] = Color.FromArgb(255, dlg.Color.R, dlg.Color.G, dlg.Color.B);
+                    colorButtons[index].BackColor = editColors[index];
+                    rgbLabels[index].Text = ColorText(editColors[index]);
+                    previewPanel.Invalidate();
+                }
+            }
+        }
+
+        // ===== 按键监听 =====
+        private void StartListening(int index)
+        {
+            if (listeningIndex == index) return;
+            StopListening();
+            listeningIndex = index;
+            this.ActiveControl = null; // 让焦点回到窗体，避免空格/回车触发按钮
+            modifyButtons[index].Text = "请按键…";
+            statusLabel.Text = "请按键…，按 Esc 取消";
+        }
+
+        private void StopListening()
+        {
+            if (listeningIndex >= 0)
+            {
+                listeningIndex = -1;
+                statusLabel.Text = "点击「修改」后按新键绑定，按 Esc 取消；绑定后立即生效。";
+                RefreshLabels();
+            }
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (listeningIndex >= 0)
+            {
+                if (e.KeyCode == Keys.Escape)
+                {
+                    // Esc 取消本次修改，而不是绑定
+                    StopListening();
+                }
+                else
+                {
+                    // 整体替换：按下一次键即替换该动作的全部绑定
+                    edits[listeningIndex].KeysList = new List<Keys> { (Keys)((int)e.KeyCode & (int)Keys.KeyCode) };
+                    StopListening();
+                }
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
+            base.OnKeyDown(e);
+        }
+
+        private void RefreshLabels()
+        {
+            for (int i = 0; i < edits.Length; i++)
+            {
+                keyLabels[i].Text = HotkeyNames.JoinDisplay(edits[i].KeysList);
+                modifyButtons[i].Text = "修改";
+            }
+        }
+
+        // ===== 恢复默认（快捷键 + 外观）=====
+        private void RestoreDefaults()
+        {
+            foreach (HotkeyAction act in edits)
+                act.KeysList = new List<Keys>(act.DefaultKeys);
+            RefreshLabels();
+
+            editColors = new Color[] {
+                Color.FromArgb(255, 255, 40, 40),
+                Color.FromArgb(255, 255, 40, 40),
+                Color.FromArgb(255, 160, 40, 200),
+                Color.FromArgb(255, 40, 200, 40),
+            };
+            editSize = 8;
+            editShape = MarkerShape.Circle;
+
+            sizeTrack.Value = editSize;
+            sizeLabel.Text = editSize + " px";
+            for (int i = 0; i < editColors.Length; i++)
+            {
+                colorButtons[i].BackColor = editColors[i];
+                rgbLabels[i].Text = ColorText(editColors[i]);
+            }
+            for (int i = 0; i < shapeRadios.Length; i++)
+                shapeRadios[i].Checked = ((int)editShape) == i;
+            previewPanel.Invalidate();
+        }
+
+        // ===== 保存（快捷键冲突检测 + 外观写回）=====
+        private void SaveAndClose()
+        {
+            StopListening();
+
+            // 全局查重（同一动作内重复键自动去重，跨动作重复报冲突）
+            Dictionary<Keys, HotkeyAction> seen = new Dictionary<Keys, HotkeyAction>();
+            foreach (HotkeyAction act in edits)
+            {
+                foreach (Keys k in act.KeysList)
+                {
+                    HotkeyAction other;
+                    if (seen.TryGetValue(k, out other) && other != act)
+                    {
+                        MessageBox.Show(this,
+                            "按键冲突：'" + HotkeyNames.ToDisplayName(k) + "' 已绑定到「" + other.DisplayName +
+                            "」，无法再绑定到「" + act.DisplayName + "」。请为两个动作设置不同按键。",
+                            "快捷键冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return; // 不保存、不关窗，各动作保持原绑定
+                    }
+                    seen[k] = act;
+                }
+            }
+
+            // 写回快捷键
+            for (int i = 0; i < edits.Length; i++)
+            {
+                config.Actions[i].KeysList = new List<Keys>(edits[i].KeysList.Distinct());
+            }
+            // 写回外观
+            config.NormalColor = editColors[0];
+            config.RoomColor = editColors[1];
+            config.CrowbarColor = editColors[2];
+            config.BearColor = editColors[3];
+            config.MarkerSize = editSize;
+            config.Shape = editShape;
+            config.Save();
+
+            this.DialogResult = DialogResult.OK;
+            this.Close();
         }
     }
 
